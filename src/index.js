@@ -12,7 +12,7 @@ const path = require("path");
 dotenv.config({ path: "./src/.env" });
 
 var corsOptions = {
-  origin: ["http://localhost:5173", "https://jagerthejagershop.netlify.app"],
+  origin: ["http://localhost:5173", "https://jagerthejagershop.netlify.app", "https://main--jagerthejagershop.netlify.app/"],
   optionsSuccessStatus: 200, // some legacy browsers (IE11, various SmartTVs) choke on 204
   credentials: true,
 };
