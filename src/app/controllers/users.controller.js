@@ -82,14 +82,12 @@ const userController = {
         httpOnly: true,
         sameSite: "none",
         secure: true,
-        domain: 'https://jagerthejagershop.netlify.app/'
       });
       res.cookie("refresh_token", refreshToken, {
         maxAge: 1000 * 60 * 60 * 24 * 7, //Cookie expire in 7 days
         httpOnly: true,
         sameSite: "none",
         secure: true,
-        domain: 'https://jagerthejagershop.netlify.app/'
       });
       res.status(200).json({
         message: "Login successfully",
@@ -123,7 +121,6 @@ const userController = {
           httpOnly: true,
           sameSite: "none",
           secure: true,
-          domain: 'https://jagerthejagershop.netlify.app/'
         });
       }
       const {
@@ -160,7 +157,6 @@ const userController = {
           httpOnly: true,
           sameSite: "none",
           secure: true,
-          domain: 'https://jagerthejagershop.netlify.app/'
         });
       }
       const userName = req.body.userName;
