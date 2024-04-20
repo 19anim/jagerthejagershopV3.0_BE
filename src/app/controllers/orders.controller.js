@@ -3,6 +3,7 @@ const userModel = require("../../model/user.model");
 const orderModel = require("../../model/order.model");
 const statusModel = require("../../model/status.model");
 const DEFAULT_ORDER_STATUS = "CREATED";
+const ADMIN_ROLE = "ADMIN";
 
 const orderController = {
   getOrderByUserName: async (req, res) => {
@@ -22,15 +23,46 @@ const orderController = {
   getOrderByOrderId: async (req, res) => {
     try {
       const { orderId } = req.params;
-      const order = await orderModel.findById(orderId).populate({
-        path: "items.item",
-        populate: {
-          path: "category"
-        }
-      }).populate("status");
+      const order = await orderModel
+        .findById(orderId)
+        .populate({
+          path: "items.item",
+          populate: {
+            path: "category",
+          },
+        })
+        .populate("status");
       res.status(200).json(order);
     } catch (error) {
       res.status(500).json(error);
+    }
+  },
+  getAllOrdersByAdmin: async (req, res) => {
+    try {
+      // define if this user is admin
+      const { userName } = req.body;
+      if(!userName){
+        return res.status(401).json("NOT AUTHORIZED");
+      }
+      const user = await userModel.findOne({ userName: userName }).populate({
+        path: "roles",
+      });
+      const userRoles = user?.roles;
+      const isAdmin = userRoles.findIndex((userRole) => {
+        return userRole.role === ADMIN_ROLE;
+      })
+
+      // if admin
+      if(isAdmin !== -1){
+        const orders = await orderModel.find();
+        return res.status(200).json(orders);
+      }
+      //if NOT admin
+      else{
+        return res.status(401).json({errorMessage: "NOT AUTHORIZED"});
+      }
+    } catch (error) {
+      return res.status(500).json(error);
     }
   },
   placeOrderAndSendMessage: async (req, res) => {

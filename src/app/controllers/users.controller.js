@@ -192,7 +192,6 @@ const userController = {
         .lean();
       if (userInfor) {
         delete userInfor.password;
-        delete userInfor.roles;
         delete userInfor.refreshToken;
         delete userInfor._id;
         delete userInfor.__v;
