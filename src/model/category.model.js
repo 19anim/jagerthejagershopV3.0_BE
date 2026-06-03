@@ -9,6 +9,10 @@ const CategorySchema = new mongoose.Schema({
     type: String,
     required: true,
   },
+  imagePublicId: {
+    type: String,
+    default: "",
+  },
   products: [
     {
       type: mongoose.Schema.Types.ObjectId,

@@ -43,9 +43,6 @@ const UserSchema = new mongoose.Schema({
       ref: "Roles",
     },
   ],
-  accessToken: {
-    type: String,
-  },
   refreshToken: {
     type: String,
   },

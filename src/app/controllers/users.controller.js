@@ -1,12 +1,25 @@
 const userModel = require("../../model/user.model");
 const roleModel = require("../../model/role.model");
 const bcrypt = require("bcrypt");
-const jwt = require("jsonwebtoken");
 const suid = require("rand-token").suid;
 const SALT_ROUNDS = 10;
 const accessTokenUtil = require("../../utils/accessToken.utils");
-const mongoose = require("mongoose");
 const NORMAL_USER_ROLE = "NORMAL_USER";
+const {
+  clearAuthCookies,
+  setAccessTokenCookie,
+  setRefreshTokenCookie,
+} = require("../../utils/authCookie.utils");
+
+const sanitizeUser = (user) => {
+  const userInfor = user.toObject ? user.toObject() : { ...user };
+  delete userInfor.password;
+  delete userInfor.refreshToken;
+  delete userInfor.accessToken;
+  delete userInfor._id;
+  delete userInfor.__v;
+  return userInfor;
+};
 
 const userController = {
   addUser: async (req, res) => {
@@ -18,7 +31,7 @@ const userController = {
       if (isUserExist) {
         res.status(409).json("This user is existed");
       } else {
-        let refreshToken = suid(16);
+        const refreshToken = suid(32);
         const hashPassword = bcrypt.hashSync(req.body.password, SALT_ROUNDS);
         const role = !req.body.role
           ? await roleModel.findOne({ role: NORMAL_USER_ROLE })
@@ -64,7 +77,9 @@ const userController = {
       if (!isPasswordValid) {
         return res.status(401).json("Wrong username or password");
       }
-      const refreshToken = userInfor.refreshToken;
+      const refreshToken = suid(32);
+      userInfor.refreshToken = refreshToken;
+      await userInfor.save();
       const accessTokenLife = process.env.ACCESS_TOKEN_LIFE;
       const accessTokenSecret = process.env.ACCESS_TOKEN_SECRET;
       const accessToken = accessTokenUtil.createAccessToken(
@@ -77,26 +92,12 @@ const userController = {
           .status(401)
           .json("Something went wrong when trying to login, please try again");
       }
-      res.cookie("access_token", accessToken, {
-        maxAge: 1000 * 60 * 60 * 24 * 7, //Cookie expire in 7 days
-        httpOnly: true,
-        sameSite: "none",
-        secure: true,
-      });
-      res.cookie("refresh_token", refreshToken, {
-        maxAge: 1000 * 60 * 60 * 24 * 7, //Cookie expire in 7 days
-        httpOnly: true,
-        sameSite: "none",
-        secure: true,
-      });
+      setAccessTokenCookie(res, accessToken);
+      setRefreshTokenCookie(res, refreshToken);
       res.status(200).json({
         message: "Login successfully",
         userName: userInfor.userName,
         email: userInfor.email,
-        accessToken: accessToken,
-        refreshToken: userInfor.refreshToken
-          ? userInfor.refreshToken
-          : refreshToken,
       });
     } catch (error) {
       res.status(500).json(error);
@@ -105,8 +106,11 @@ const userController = {
 
   logoutUser: async (req, res) => {
     try {
-      res.clearCookie("access_token");
-      res.clearCookie("refresh_token");
+      const refreshToken = req.cookies?.refresh_token;
+      if (refreshToken) {
+        await userModel.updateOne({ refreshToken }, { $set: { refreshToken: "" } });
+      }
+      clearAuthCookies(res);
       res.status(200).json("Logout Successfully");
     } catch (error) {
       res.status(500).json(error);
@@ -115,14 +119,6 @@ const userController = {
 
   editUser: async (req, res) => {
     try {
-      if (res.locals.refreshedAccessToken) {
-        res.cookie("access_token", res.locals.refreshedAccessToken, {
-          maxAge: 1000 * 60 * 60 * 24 * 7, //Cookie expire in 7 days
-          httpOnly: true,
-          sameSite: "none",
-          secure: true,
-        });
-      }
       const {
         phoneNumber,
         receipentName,
@@ -132,8 +128,7 @@ const userController = {
         city,
         email,
       } = req.body;
-      const user = userModel.find({ userName: req.params.userName });
-      const savedNewUser = await user.updateOne({
+      const savedNewUser = await userModel.updateOne({ _id: req.user._id }, {
         phoneNumber: phoneNumber,
         receipentName: receipentName,
         email: email,
@@ -151,23 +146,7 @@ const userController = {
 
   getUserInformation: async (req, res) => {
     try {
-      if (res.locals.refreshedAccessToken) {
-        res.cookie("access_token", res.locals.refreshedAccessToken, {
-          maxAge: 1000 * 60 * 60 * 24 * 7, //Cookie expire in 7 days
-          httpOnly: true,
-          sameSite: "none",
-          secure: true,
-        });
-      }
-      const userName = req.body.userName;
-      let userInfor = await userModel.findOne({ userName: userName }).lean().populate("roles");
-      if (userInfor) {
-        delete userInfor.password;
-        delete userInfor.refreshToken;
-        delete userInfor._id;
-        delete userInfor.__v;
-      }
-      return res.status(200).json(userInfor);
+      return res.status(200).json(sanitizeUser(req.user));
     } catch (error) {
       return res.status(500).json(error);
     }
@@ -175,35 +154,10 @@ const userController = {
 
   verifyIsLoggedIn: async (req, res) => {
     try {
-      if (
-        req.cookies.refresh_token == "" ||
-        req.cookies.refresh_token == undefined ||
-        req.cookies.access_token == undefined ||
-        req.cookies.access_token == ""
-      ) {
-        return res.status(401).json({
-          isLoggedIn: false,
-        });
-      }
-      const userInfor = await userModel
-        .findOne({
-          refreshToken: req.cookies.refresh_token,
-        })
-        .lean();
-      if (userInfor) {
-        delete userInfor.password;
-        delete userInfor.refreshToken;
-        delete userInfor._id;
-        delete userInfor.__v;
-        return res.status(200).json({
-          isLoggedIn: true,
-          userInfor: userInfor,
-        });
-      } else {
-        return res.status(401).json({
-          isLoggedIn: false,
-        });
-      }
+      return res.status(200).json({
+        isLoggedIn: true,
+        userInfor: sanitizeUser(req.user),
+      });
     } catch (error) {
       res.status(500).json({
         isLoggedIn: false,

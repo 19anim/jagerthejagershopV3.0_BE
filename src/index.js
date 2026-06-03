@@ -1,7 +1,6 @@
 const express = require("express");
 const app = express();
 const port = 3000;
-const route = require("../src/routes/index.route");
 const moongose = require("mongoose");
 const bodyParser = require("body-parser");
 const morgan = require("morgan");
@@ -9,7 +8,9 @@ const cors = require("cors");
 const dotenv = require("dotenv");
 const cookieParser = require("cookie-parser");
 const path = require("path");
+dotenv.config({ path: "./.env" });
 dotenv.config({ path: "./src/.env" });
+const route = require("../src/routes/index.route");
 
 var corsOptions = {
   origin: ["http://localhost:5173", "https://jagerthejagershop.netlify.app", "https://main--jagerthejagershop.netlify.app/"],
