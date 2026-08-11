@@ -11,6 +11,7 @@ const path = require("path");
 dotenv.config({ path: "./.env" });
 dotenv.config({ path: "./src/.env" });
 const route = require("../src/routes/index.route");
+const telegramBot = require("./telegram/bot");
 
 var corsOptions = {
   origin: ["http://localhost:5173", "https://jagerthejagershop.netlify.app", "https://main--jagerthejagershop.netlify.app/"],
@@ -23,6 +24,7 @@ app.use(bodyParser.json());
 app.use(cookieParser());
 app.use(morgan("common"));
 route(app);
+telegramBot.init();
 moongose.connect(process.env.MONGODB_URL).then(console.log("Connected to DB"));
 
 app.listen(port, () => {

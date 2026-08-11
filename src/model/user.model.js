@@ -46,6 +46,18 @@ const UserSchema = new mongoose.Schema({
   refreshToken: {
     type: String,
   },
+  telegramChatId: {
+    type: String,
+    default: null,
+  },
+  telegramLinkCode: {
+    type: String,
+    default: null,
+  },
+  telegramLinkCodeExpiresAt: {
+    type: Date,
+    default: null,
+  },
 });
 
 const User = mongoose.model("Users", UserSchema);

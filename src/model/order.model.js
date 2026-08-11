@@ -47,6 +47,24 @@ const OrderSchema = new mongoose.Schema(
         ref: "Statuses",
       },
     ],
+    shippingFee: {
+      type: Number,
+      default: 0,
+    },
+    discountType: {
+      type: String,
+      enum: ["FLAT", "PERCENT"],
+      default: null,
+    },
+    discountValue: {
+      type: Number,
+      default: 0,
+    },
+    source: {
+      type: String,
+      enum: ["WEB", "TELEGRAM"],
+      default: "WEB",
+    },
   },
   { timestamps: true }
 );

@@ -13,11 +13,15 @@ const {
 
 const sanitizeUser = (user) => {
   const userInfor = user.toObject ? user.toObject() : { ...user };
+  userInfor.telegramLinked = Boolean(userInfor.telegramChatId);
   delete userInfor.password;
   delete userInfor.refreshToken;
   delete userInfor.accessToken;
   delete userInfor._id;
   delete userInfor.__v;
+  delete userInfor.telegramChatId;
+  delete userInfor.telegramLinkCode;
+  delete userInfor.telegramLinkCodeExpiresAt;
   return userInfor;
 };
 

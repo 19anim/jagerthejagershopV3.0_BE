@@ -61,6 +61,120 @@ const reserveInventory = async (items) => {
   return reservedItems;
 };
 
+const buildOrderMessage = ({ userName, items, total, paymentMethod, shippingFee, discountType, discountValue, source }) => {
+  const cartItemsMessage = items.map((item) => {
+    return `\n${item.quantity} ${item.name}`;
+  });
+  const extraLines = [];
+  if (shippingFee) extraLines.push(`Shipping fee: ${shippingFee} VNĐ`);
+  if (discountType) extraLines.push(`Discount: ${discountValue}${discountType === "PERCENT" ? "%" : " VNĐ"}`);
+  if (source === "TELEGRAM") extraLines.push("Source: Telegram");
+  const extra = extraLines.length ? `\n${extraLines.join("\n")}` : "";
+  return `${userName} has order ${cartItemsMessage}\nTotal: ${total} VNĐ\nPayment method: ${paymentMethod}${extra}`.replaceAll(",", "");
+};
+
+const computeTotalFromProducts = async (listItem, shippingFee, discountType, discountValue) => {
+  const productIds = listItem.map(({ item }) => item);
+  const products = await productModel.find({ _id: { $in: productIds } });
+  const priceById = new Map(products.map((product) => [String(product._id), product.priceInInteger]));
+
+  let subtotal = 0;
+  for (const { item, quantity } of listItem) {
+    const unitPrice = priceById.get(String(item));
+    if (unitPrice === undefined) {
+      const error = new Error("Sản phẩm không tồn tại.");
+      error.statusCode = 400;
+      throw error;
+    }
+    subtotal += unitPrice * quantity;
+  }
+
+  let discountAmount = 0;
+  if (discountType === "FLAT") discountAmount = discountValue;
+  if (discountType === "PERCENT") discountAmount = Math.round((subtotal * discountValue) / 100);
+
+  const total = Math.max(subtotal - discountAmount, 0) + (shippingFee || 0);
+  return String(total);
+};
+
+// Shared order-creation flow used by both the website checkout and the Telegram bot.
+// When `total` is omitted, it is computed server-side from product prices, shippingFee, and discount.
+const createOrder = async ({
+  userName,
+  isGuess,
+  receipentName,
+  phoneNumber,
+  address,
+  ward,
+  district,
+  city,
+  items,
+  total,
+  paymentMethod,
+  shippingFee = 0,
+  discountType = null,
+  discountValue = 0,
+  source = "WEB",
+}) => {
+  let reservedItems = [];
+  try {
+    const userDocument = await userModel.findOne({ userName });
+    const defaultStatusDocument = await statusModel.findOne({ statusName: DEFAULT_ORDER_STATUS });
+
+    const listItem = normalizeInventoryItems(items);
+    const resolvedTotal = total !== undefined && total !== null
+      ? total
+      : await computeTotalFromProducts(listItem, shippingFee, discountType, discountValue);
+
+    const orderMessage = buildOrderMessage({
+      userName,
+      items,
+      total: resolvedTotal,
+      paymentMethod,
+      shippingFee,
+      discountType,
+      discountValue,
+      source,
+    });
+
+    const newOrder = new orderModel({
+      receipentName,
+      phoneNumber,
+      address,
+      ward,
+      district,
+      city,
+      items: listItem,
+      total: resolvedTotal,
+      userName,
+      isGuess,
+      paymentMethod,
+      shippingFee,
+      discountType,
+      discountValue,
+      source,
+      status: defaultStatusDocument._id,
+    });
+
+    reservedItems = await reserveInventory(listItem);
+    const savedOrder = await newOrder.save();
+    reservedItems = [];
+    if (userDocument) {
+      await userDocument.updateOne({ $push: { orders: savedOrder._id } });
+    }
+    if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID_1) {
+      const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
+      bot.sendMessage(process.env.TELEGRAM_CHAT_ID_1, orderMessage).catch((error) => {
+        console.error("Telegram order notification failed:", error.message);
+      });
+    }
+    return savedOrder;
+  } catch (error) {
+    await releaseInventory(reservedItems);
+    throw error;
+  }
+};
+
 const orderController = {
   getOrderByUserName: async (req, res) => {
     try {
@@ -135,7 +249,6 @@ const orderController = {
     }
   },
   placeOrderAndSendMessage: async (req, res) => {
-    let reservedItems = [];
     try {
       // Get data from request body
       const { order } = req.body;
@@ -144,60 +257,28 @@ const orderController = {
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ errorMessage: "Giỏ hàng đang trống." });
       }
-      const { receipentName, phoneNumber, address, ward, district, city } =
-        userInfor;
+      const { receipentName, phoneNumber, address, ward, district, city } = userInfor;
 
-      // Get Document of Status
-      const userDocument = await userModel.findOne({ userName: userName });
-      const defaultStatusDocument = await statusModel.findOne({
-        statusName: DEFAULT_ORDER_STATUS,
+      const savedOrder = await createOrder({
+        userName,
+        isGuess: !req.user,
+        receipentName,
+        phoneNumber,
+        address,
+        ward,
+        district,
+        city,
+        items,
+        total,
+        paymentMethod,
+        source: "WEB",
       });
-
-      // Define object and message to create new document and inform
-      const cartItemsMessage = items.map((item) => {
-        return `\n${item.quantity} ${item.name}`;
-      });
-      const orderMessage =
-        `${userName} has order ${cartItemsMessage}\nTotal: ${total} VNĐ\nPayment method: ${paymentMethod}`.replaceAll(
-          ",",
-          ""
-        );
-      const listItem = normalizeInventoryItems(items);
-      const newOrder = new orderModel({
-        receipentName: receipentName,
-        phoneNumber: phoneNumber,
-        address: address,
-        ward: ward,
-        district: district,
-        city: city,
-        items: listItem,
-        total: total,
-        userName: userName,
-        isGuess: false,
-        paymentMethod: paymentMethod,
-        status: defaultStatusDocument._id,
-      });
-      if (!req.user) newOrder.isGuess = true;
-
-      // Action: save Document of Order, and update Document of User, and send telegram message through BOT
-      reservedItems = await reserveInventory(listItem);
-      const savedOrder = await newOrder.save();
-      reservedItems = [];
-      if (userDocument) {
-        await userDocument.updateOne({ $push: { orders: savedOrder._id } });
-      }
-      if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHAT_ID_1) {
-        const bot = new TelegramBot(process.env.TELEGRAM_BOT_TOKEN);
-        bot.sendMessage(process.env.TELEGRAM_CHAT_ID_1, orderMessage).catch((error) => {
-          console.error("Telegram order notification failed:", error.message);
-        });
-      }
       res.status(200).json(savedOrder);
     } catch (error) {
-      await releaseInventory(reservedItems);
       res.status(error.statusCode || 500).json({ errorMessage: error.message });
     }
   },
 };
 
 module.exports = orderController;
+module.exports.createOrder = createOrder;

@@ -5,6 +5,7 @@ const usersRouter = require("../routes/users.route");
 const roleRouter = require("../routes/roles.route");
 const orderRouter = require("../routes/orders.route");
 const deliveryRouter = require("../routes/delivery.route");
+const telegramRouter = require("../routes/telegram.route");
 
 const route = (app) => {
   app.use("/api/products", productsRouter);
@@ -14,6 +15,7 @@ const route = (app) => {
   app.use("/api/roles", roleRouter);
   app.use("/api/orders", orderRouter);
   app.use("/api/delivery", deliveryRouter);
+  app.use("/api/telegram", telegramRouter);
   app.use("/", (req, res) => {
     res.send("Index page");
   });
