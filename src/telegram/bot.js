@@ -1,6 +1,7 @@
 const TelegramBot = require("node-telegram-bot-api");
 const userModel = require("../model/user.model");
 const productModel = require("../model/product.model");
+const categoryModel = require("../model/category.model");
 const { createOrder } = require("../app/controllers/orders.controller");
 
 const ADMIN_ROLE = "ADMIN";
@@ -17,7 +18,15 @@ const sessions = new Map();
 const getSession = (chatId) => sessions.get(chatId);
 const resetSession = (chatId) => sessions.delete(chatId);
 const startSession = (chatId) => {
-  const session = { step: "BROWSING", page: 0, cart: [], shippingFee: 0, discountType: null, discountValue: 0 };
+  const session = {
+    step: "CHOOSING_CATEGORY",
+    categoryId: null,
+    page: 0,
+    cart: [],
+    shippingFee: 0,
+    discountType: null,
+    discountValue: 0,
+  };
   sessions.set(chatId, session);
   return session;
 };
@@ -29,10 +38,24 @@ const findLinkedAdmin = async (chatId) => {
   return isAdmin ? user : null;
 };
 
+const sendCategoryList = async (chatId, session) => {
+  const categories = await categoryModel.find().sort({ name: 1 });
+
+  const rows = categories.map((category) => [{ text: category.name, callback_data: `cat:${category._id}` }]);
+  rows.push([{ text: "All products", callback_data: "cat:ALL" }]);
+  if (session.cart.length > 0) {
+    rows.push([{ text: `Done selecting (${session.cart.length} item(s))`, callback_data: "done" }]);
+  }
+  rows.push([{ text: "Cancel order", callback_data: "cancel" }]);
+
+  await bot.sendMessage(chatId, "Choose a category:", { reply_markup: { inline_keyboard: rows } });
+};
+
 const sendProductPage = async (chatId, session) => {
-  const totalCount = await productModel.countDocuments();
+  const filter = session.categoryId ? { category: session.categoryId } : {};
+  const totalCount = await productModel.countDocuments(filter);
   const products = await productModel
-    .find()
+    .find(filter)
     .sort({ name: 1 })
     .skip(session.page * PAGE_SIZE)
     .limit(PAGE_SIZE);
@@ -51,6 +74,7 @@ const sendProductPage = async (chatId, session) => {
   if (session.page < pageCount - 1) navRow.push({ text: "Next ▶", callback_data: "page:next" });
   if (navRow.length) rows.push(navRow);
 
+  rows.push([{ text: "◀ Back to categories", callback_data: "cat:back" }]);
   if (session.cart.length > 0) {
     rows.push([{ text: `Done selecting (${session.cart.length} item(s))`, callback_data: "done" }]);
   }
@@ -126,7 +150,7 @@ const handleNewOrderCommand = async (chatId) => {
   }
   const session = startSession(chatId);
   session.userName = admin.userName;
-  await sendProductPage(chatId, session);
+  await sendCategoryList(chatId, session);
 };
 
 const handleLinkCommand = async (chatId, code) => {
@@ -224,6 +248,21 @@ const handleCallbackQuery = async (query) => {
   }
 
   if (!session) return;
+
+  if (data.startsWith("cat:")) {
+    const categoryId = data.slice(4);
+    if (categoryId === "back") {
+      session.step = "CHOOSING_CATEGORY";
+      session.categoryId = null;
+      await sendCategoryList(chatId, session);
+    } else {
+      session.categoryId = categoryId === "ALL" ? null : categoryId;
+      session.page = 0;
+      session.step = "BROWSING";
+      await sendProductPage(chatId, session);
+    }
+    return;
+  }
 
   if (data.startsWith("add:")) {
     session.pendingProductId = data.slice(4);
