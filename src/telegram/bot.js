@@ -12,6 +12,21 @@ const PAYMENT_OPTIONS = [
   { method: "TRANSFER_MOMO", label: "Momo transfer" },
 ];
 
+const BOT_COMMANDS = [
+  { command: "help", description: "Show available commands" },
+  { command: "link", description: "Link this chat to your admin account: /link <code>" },
+  { command: "neworder", description: "Start creating a new order" },
+  { command: "stock", description: "View and edit product stock" },
+];
+
+const HELP_TEXT = [
+  "Available commands:",
+  "/neworder — start creating a new order",
+  "/stock — view and edit product stock",
+  "/link <code> — link this chat to your admin account",
+  "/help — show this message",
+].join("\n");
+
 let bot = null;
 const sessions = new Map();
 
@@ -153,6 +168,86 @@ const handleNewOrderCommand = async (chatId) => {
   await sendCategoryList(chatId, session);
 };
 
+const startStockSession = (chatId) => {
+  const session = { mode: "STOCK", step: "STOCK_CHOOSING_CATEGORY", categoryId: null, page: 0, pendingProductId: null };
+  sessions.set(chatId, session);
+  return session;
+};
+
+const sendStockCategoryList = async (chatId) => {
+  const categories = await categoryModel.find().sort({ name: 1 });
+  const rows = categories.map((category) => [{ text: category.name, callback_data: `stkcat:${category._id}` }]);
+  rows.push([{ text: "All products", callback_data: "stkcat:ALL" }]);
+  rows.push([{ text: "Cancel", callback_data: "cancel" }]);
+  await bot.sendMessage(chatId, "Choose a category to view stock:", { reply_markup: { inline_keyboard: rows } });
+};
+
+const sendStockProductPage = async (chatId, session) => {
+  const filter = session.categoryId ? { category: session.categoryId } : {};
+  const totalCount = await productModel.countDocuments(filter);
+  const products = await productModel
+    .find(filter)
+    .sort({ name: 1 })
+    .skip(session.page * PAGE_SIZE)
+    .limit(PAGE_SIZE);
+
+  const rows = products.map((product) => [
+    { text: `${product.name} — stock: ${product.stock}`, callback_data: `stkview:${product._id}` },
+  ]);
+
+  const pageCount = Math.max(Math.ceil(totalCount / PAGE_SIZE), 1);
+  const navRow = [];
+  if (session.page > 0) navRow.push({ text: "◀ Prev", callback_data: "stkpage:prev" });
+  if (session.page < pageCount - 1) navRow.push({ text: "Next ▶", callback_data: "stkpage:next" });
+  if (navRow.length) rows.push(navRow);
+
+  rows.push([{ text: "◀ Back to categories", callback_data: "stkcat:back" }]);
+  rows.push([{ text: "Cancel", callback_data: "cancel" }]);
+
+  const text = `Product stock (page ${session.page + 1}/${pageCount}). Tap a product to view or edit its stock.`;
+  await bot.sendMessage(chatId, text, { reply_markup: { inline_keyboard: rows } });
+};
+
+const sendStockProductDetail = async (chatId, session, productId) => {
+  const product = await productModel.findById(productId);
+  if (!product) {
+    await bot.sendMessage(chatId, "Product not found.");
+    return;
+  }
+  session.pendingProductId = String(product._id);
+  session.step = "STOCK_VIEWING_PRODUCT";
+  await bot.sendMessage(chatId, `${product.name}\nCurrent stock: ${product.stock}`, {
+    reply_markup: {
+      inline_keyboard: [
+        [
+          { text: "➖ 1", callback_data: "stkadj:-1" },
+          { text: "➕ 1", callback_data: "stkadj:1" },
+        ],
+        [
+          { text: "➖ 5", callback_data: "stkadj:-5" },
+          { text: "➕ 5", callback_data: "stkadj:5" },
+        ],
+        [{ text: "Set exact value", callback_data: "stkset" }],
+        [{ text: "◀ Back to list", callback_data: "stkcat:refresh" }],
+        [{ text: "Cancel", callback_data: "cancel" }],
+      ],
+    },
+  });
+};
+
+const handleStockCommand = async (chatId) => {
+  const admin = await findLinkedAdmin(chatId);
+  if (!admin) {
+    await bot.sendMessage(
+      chatId,
+      "This Telegram account isn't linked to an admin account yet. Generate a link code from your account page on the website, then send /link <code> here."
+    );
+    return;
+  }
+  startStockSession(chatId);
+  await sendStockCategoryList(chatId);
+};
+
 const handleLinkCommand = async (chatId, code) => {
   if (!code) {
     await bot.sendMessage(chatId, "Usage: /link <code>");
@@ -178,6 +273,11 @@ const handleMessage = async (msg) => {
   const text = msg.text?.trim();
   if (!text) return;
 
+  if (text === "/help" || text === "/start") {
+    await bot.sendMessage(chatId, HELP_TEXT);
+    return;
+  }
+
   if (text.startsWith("/link")) {
     const [, code] = text.split(/\s+/);
     await handleLinkCommand(chatId, code);
@@ -189,8 +289,35 @@ const handleMessage = async (msg) => {
     return;
   }
 
+  if (text === "/stock") {
+    await handleStockCommand(chatId);
+    return;
+  }
+
   const session = getSession(chatId);
   if (!session) return;
+
+  if (session.step === "AWAITING_STOCK_VALUE") {
+    const value = Number.parseInt(text, 10);
+    if (!Number.isInteger(value) || value < 0) {
+      await bot.sendMessage(chatId, "Please enter a valid whole number (0 or more).");
+      return;
+    }
+    const product = await productModel.findByIdAndUpdate(
+      session.pendingProductId,
+      { $set: { stock: value } },
+      { new: true, runValidators: true }
+    );
+    if (!product) {
+      await bot.sendMessage(chatId, "Product not found.");
+      resetSession(chatId);
+      return;
+    }
+    session.step = "STOCK_VIEWING_PRODUCT";
+    await bot.sendMessage(chatId, `Stock updated. ${product.name} — current stock: ${product.stock}`);
+    await sendStockProductDetail(chatId, session, product._id);
+    return;
+  }
 
   if (session.step === "AWAITING_QUANTITY") {
     const quantity = Number.parseInt(text, 10);
@@ -242,12 +369,70 @@ const handleCallbackQuery = async (query) => {
   await bot.answerCallbackQuery(query.id).catch(() => {});
 
   if (data === "cancel") {
+    const isStockSession = session?.mode === "STOCK";
     resetSession(chatId);
-    await bot.sendMessage(chatId, "Order cancelled.");
+    await bot.sendMessage(chatId, isStockSession ? "Stock lookup cancelled." : "Order cancelled.");
     return;
   }
 
   if (!session) return;
+
+  if (data.startsWith("stkcat:")) {
+    const categoryId = data.slice(7);
+    if (categoryId === "back") {
+      session.step = "STOCK_CHOOSING_CATEGORY";
+      session.categoryId = null;
+      session.page = 0;
+      await sendStockCategoryList(chatId);
+    } else if (categoryId === "refresh") {
+      session.step = "STOCK_BROWSING";
+      await sendStockProductPage(chatId, session);
+    } else {
+      session.categoryId = categoryId === "ALL" ? null : categoryId;
+      session.page = 0;
+      session.step = "STOCK_BROWSING";
+      await sendStockProductPage(chatId, session);
+    }
+    return;
+  }
+
+  if (data === "stkpage:prev") {
+    session.page = Math.max(session.page - 1, 0);
+    await sendStockProductPage(chatId, session);
+    return;
+  }
+
+  if (data === "stkpage:next") {
+    session.page += 1;
+    await sendStockProductPage(chatId, session);
+    return;
+  }
+
+  if (data.startsWith("stkview:")) {
+    await sendStockProductDetail(chatId, session, data.slice(8));
+    return;
+  }
+
+  if (data.startsWith("stkadj:")) {
+    const delta = Number.parseInt(data.slice(7), 10);
+    const product = await productModel.findOneAndUpdate(
+      { _id: session.pendingProductId, stock: { $gte: Math.max(-delta, 0) } },
+      { $inc: { stock: delta } },
+      { new: true, runValidators: true }
+    );
+    if (!product) {
+      await bot.sendMessage(chatId, "Cannot reduce stock below 0.");
+      return;
+    }
+    await sendStockProductDetail(chatId, session, product._id);
+    return;
+  }
+
+  if (data === "stkset") {
+    session.step = "AWAITING_STOCK_VALUE";
+    await bot.sendMessage(chatId, "Enter the exact stock quantity:");
+    return;
+  }
 
   if (data.startsWith("cat:")) {
     const categoryId = data.slice(4);
@@ -356,6 +541,10 @@ const init = () => {
   });
   bot.on("callback_query", (query) => {
     handleCallbackQuery(query).catch((error) => console.error("Telegram callback handling failed:", error.message));
+  });
+
+  bot.setMyCommands(BOT_COMMANDS).catch((error) => {
+    console.error("Failed to set Telegram bot commands:", error.message);
   });
 
   if (process.env.TELEGRAM_WEBHOOK_URL) {
