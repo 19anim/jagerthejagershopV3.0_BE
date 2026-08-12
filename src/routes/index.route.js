@@ -8,6 +8,9 @@ const deliveryRouter = require("../routes/delivery.route");
 const telegramRouter = require("../routes/telegram.route");
 
 const route = (app) => {
+  app.get("/health", (req, res) => {
+    res.status(200).json({ status: "ok" });
+  });
   app.use("/api/products", productsRouter);
   app.use("/api/categories", categoriesRouter);
   app.use("/api/productsDescription", productsDescriptionRouter);
