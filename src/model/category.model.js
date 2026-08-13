@@ -13,6 +13,11 @@ const CategorySchema = new mongoose.Schema({
     type: String,
     default: "",
   },
+  assetId: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "Assets",
+    default: null,
+  },
   products: [
     {
       type: mongoose.Schema.Types.ObjectId,

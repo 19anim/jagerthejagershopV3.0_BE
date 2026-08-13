@@ -18,6 +18,11 @@ const productSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+    assetId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Assets",
+      default: null,
+    },
     vol: {
       type: String,
       required: true,

@@ -27,4 +27,33 @@ const destroyUploadedAsset = async (publicId) => {
   }
 };
 
-module.exports = { cloudinary, productImageStorage, categoryImageStorage, destroyUploadedAsset };
+const ASSET_FOLDERS = {
+  product: "Jagerthejagershop/Assets/Products",
+  category: "Jagerthejagershop/Assets/Categories",
+};
+
+const uploadAssetBuffer = (buffer, { category, label, version }) =>
+  new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      {
+        public_id: `${label}-v${version}`,
+        folder: ASSET_FOLDERS[category],
+        overwrite: false,
+        resource_type: "image",
+      },
+      (error, result) => {
+        if (error) return reject(error);
+        return resolve(result);
+      }
+    );
+    stream.end(buffer);
+  });
+
+module.exports = {
+  cloudinary,
+  productImageStorage,
+  categoryImageStorage,
+  destroyUploadedAsset,
+  ASSET_FOLDERS,
+  uploadAssetBuffer,
+};

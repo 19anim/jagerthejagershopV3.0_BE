@@ -2,6 +2,7 @@ const productModel = require("../../model/product.model");
 const categoryModel = require("../../model/category.model");
 const productDescriptionModel = require("../../model/productDescription.model");
 const { destroyUploadedAsset } = require("../../utils/cloudinary.utils");
+const { resolveAssetImage, resolveActiveImagesByAssetIds } = require("../../services/asset.service");
 const slugify = require("slugify");
 
 const normalizeProductFields = (body) => {
@@ -19,15 +20,40 @@ const normalizeProductFields = (body) => {
   if (!product.description) delete product.description;
   if (!product.category) delete product.category;
   if (product.name) product.slug = slugify(product.name, { lower: true });
+  delete product.assetId;
+  delete product.imagePublicId;
 
   return product;
+};
+
+const withLiveImages = async (productsOrProduct) => {
+  const isArray = Array.isArray(productsOrProduct);
+  const list = isArray ? productsOrProduct : [productsOrProduct];
+  const assetIds = list
+    .filter(Boolean)
+    .flatMap((product) => [product.assetId, product.category?.assetId])
+    .filter(Boolean);
+  const imagesByAssetId = await resolveActiveImagesByAssetIds(assetIds);
+
+  const overlay = (product) => {
+    if (!product) return product;
+    const activeImage = product.assetId && imagesByAssetId.get(String(product.assetId));
+    if (activeImage) product.image = activeImage;
+    if (product.category?.assetId) {
+      const categoryActiveImage = imagesByAssetId.get(String(product.category.assetId));
+      if (categoryActiveImage) product.category.image = categoryActiveImage;
+    }
+    return product;
+  };
+
+  return isArray ? list.map(overlay) : overlay(list[0]);
 };
 
 const ProductController = {
   getAllProducts: async (_req, res) => {
     try {
-      const products = await productModel.find().populate(["category", "description"]);
-      return res.status(200).json(products);
+      const products = await productModel.find().populate(["category", "description"]).lean();
+      return res.status(200).json(await withLiveImages(products));
     } catch (error) {
       return res.status(500).json(error);
     }
@@ -41,8 +67,9 @@ const ProductController = {
         .find()
         .sort({ soldAmount: -1, createdAt: -1 })
         .limit(limit)
-        .populate(["category", "description"]);
-      return res.status(200).json(products);
+        .populate(["category", "description"])
+        .lean();
+      return res.status(200).json(await withLiveImages(products));
     } catch (error) {
       return res.status(500).json(error);
     }
@@ -50,9 +77,9 @@ const ProductController = {
 
   getAProductById: async (req, res) => {
     try {
-      const product = await productModel.findById(req.params.id).populate(["category", "description"]);
+      const product = await productModel.findById(req.params.id).populate(["category", "description"]).lean();
       if (!product) return res.status(404).json({ errorMessage: "Không tìm thấy sản phẩm." });
-      return res.status(200).json(product);
+      return res.status(200).json(await withLiveImages(product));
     } catch (error) {
       return res.status(500).json(error);
     }
@@ -60,9 +87,9 @@ const ProductController = {
 
   getAProductBySlug: async (req, res) => {
     try {
-      const product = await productModel.findOne({ slug: req.params.slug }).populate(["category", "description"]);
+      const product = await productModel.findOne({ slug: req.params.slug }).populate(["category", "description"]).lean();
       if (!product) return res.status(404).json({ errorMessage: "Không tìm thấy sản phẩm." });
-      return res.status(200).json(product);
+      return res.status(200).json(await withLiveImages(product));
     } catch (error) {
       return res.status(500).json(error);
     }
@@ -72,8 +99,9 @@ const ProductController = {
     try {
       const products = await productModel
         .find({ category: req.params.categoryId })
-        .populate(["category", "description"]);
-      return res.status(200).json(products);
+        .populate(["category", "description"])
+        .lean();
+      return res.status(200).json(await withLiveImages(products));
     } catch (error) {
       return res.status(500).json(error);
     }
@@ -83,13 +111,20 @@ const ProductController = {
     const uploadedPublicId = req.file?.filename;
     try {
       const productInformation = normalizeProductFields(req.body);
-      if (!req.file && !productInformation.image) {
-        return res.status(400).json({ errorMessage: "Vui lòng chọn ảnh sản phẩm." });
-      }
 
       if (req.file) {
         productInformation.image = req.file.path;
         productInformation.imagePublicId = uploadedPublicId;
+        productInformation.assetId = null;
+      } else if (req.body.assetId) {
+        const resolved = await resolveAssetImage(req.body.assetId);
+        productInformation.image = resolved.image;
+        productInformation.imagePublicId = resolved.imagePublicId;
+        productInformation.assetId = resolved.assetId;
+      }
+
+      if (!productInformation.image) {
+        return res.status(400).json({ errorMessage: "Vui lòng chọn ảnh sản phẩm." });
       }
 
       const savedProduct = await new productModel(productInformation).save();
@@ -105,7 +140,7 @@ const ProductController = {
       return res.status(200).json(savedProduct);
     } catch (error) {
       await destroyUploadedAsset(uploadedPublicId);
-      return res.status(500).json({ errorMessage: error.message });
+      return res.status(error.statusCode || 500).json({ errorMessage: error.message });
     }
   },
 
@@ -122,6 +157,12 @@ const ProductController = {
       if (req.file) {
         productInformation.image = req.file.path;
         productInformation.imagePublicId = uploadedPublicId;
+        productInformation.assetId = null;
+      } else if (req.body.assetId) {
+        const resolved = await resolveAssetImage(req.body.assetId);
+        productInformation.image = resolved.image;
+        productInformation.imagePublicId = resolved.imagePublicId;
+        productInformation.assetId = resolved.assetId;
       }
 
       const previousCategory = existingProduct.category?.toString();
@@ -145,14 +186,14 @@ const ProductController = {
         console.error("Product category reference update failed:", referenceError.message);
       }
 
-      if (req.file && existingProduct.imagePublicId) {
+      if ((req.file || req.body.assetId) && existingProduct.imagePublicId) {
         await destroyUploadedAsset(existingProduct.imagePublicId);
       }
 
       return res.status(200).json(updatedProduct);
     } catch (error) {
       await destroyUploadedAsset(uploadedPublicId);
-      return res.status(500).json({ errorMessage: error.message });
+      return res.status(error.statusCode || 500).json({ errorMessage: error.message });
     }
   },
 
