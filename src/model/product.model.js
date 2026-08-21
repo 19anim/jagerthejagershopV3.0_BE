@@ -57,6 +57,10 @@ const productSchema = new mongoose.Schema(
     isNewProduct: {
       type: Boolean,
     },
+    shop3dModel: {
+      type: String,
+      default: "",
+    },
   },
   { timestamps: true }
 );
