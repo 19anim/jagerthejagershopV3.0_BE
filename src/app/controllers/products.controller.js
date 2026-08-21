@@ -23,6 +23,12 @@ const normalizeProductFields = (body) => {
   delete product.assetId;
   delete product.imagePublicId;
 
+  if (typeof product.shop3dModel === "string") {
+    const trimmed = product.shop3dModel.trim();
+    if (trimmed) product.shop3dModel = trimmed;
+    else delete product.shop3dModel;
+  }
+
   return product;
 };
 
