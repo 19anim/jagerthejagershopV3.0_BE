@@ -7,6 +7,7 @@ const orderRouter = require("../routes/orders.route");
 const deliveryRouter = require("../routes/delivery.route");
 const telegramRouter = require("../routes/telegram.route");
 const assetsRouter = require("../routes/assets.route");
+const settingsRouter = require("../routes/settings.route");
 
 const route = (app) => {
   app.get("/health", (req, res) => {
@@ -21,6 +22,7 @@ const route = (app) => {
   app.use("/api/delivery", deliveryRouter);
   app.use("/api/telegram", telegramRouter);
   app.use("/api/assets", assetsRouter);
+  app.use("/api/settings", settingsRouter);
   app.use("/", (req, res) => {
     res.send("Index page");
   });
